@@ -1,0 +1,149 @@
+{
+  "name": "virtual-pro-agent",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.4",
+    "openai": "^4.10.0",
+    "paypal-rest-sdk": "^1.8.1"
+  }
+}
+const express = require('express');
+const paypal = require('paypal-rest-sdk');
+const nodemailer = require('nodemailer');
+const path = require('path');
+
+const app = express();
+app.use(express.json());
+app.use(express.static('public')); // Verkaufsseite & AI-Agent statisch
+
+// PayPal konfigurieren
+paypal.configure({
+  'mode': 'live', // oder 'sandbox' zum Testen
+  'client_id': 'DEINE_PAYPAL_CLIENT_ID',
+  'client_secret': 'DEIN_PAYPAL_SECRET'
+});
+
+// Startseite (Verkaufsseite)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/index.html'));
+});
+
+// PayPal Bezahlung anlegen
+app.post('/pay', (req, res) => {
+  const create_payment_json = {
+    "intent": "sale",
+    "payer": { "payment_method": "paypal" },
+    "redirect_urls": {
+      "return_url": "https://virtualproagent.com/success",
+      "cancel_url": "https://virtualproagent.com/cancel"
+    },
+    "transactions": [{
+      "item_list": { "items": [{ "name": "AI-Agent", "sku": "001", "price": "50.00", "currency": "USD", "quantity": 1 }] },
+      "amount": { "currency": "USD", "total": "50.00" },
+      "description": "Virtueller AI-Agent Verkaufsassistent"
+    }]
+  };
+
+  paypal.payment.create(create_payment_json, function (error, payment) {
+    if (error) { console.error(error); res.status(500).send(error); }
+    else {
+      for(let i=0; i < payment.links.length; i++) {
+        if(payment.links[i].rel === 'approval_url') {
+          return res.json({ forwardLink: payment.links[i].href });
+        }
+      }
+    }
+  });
+});
+
+// Erfolgreiche Zahlung
+app.get('/success', (req, res) => {
+  const payerId = req.query.PayerID;
+  const paymentId = req.query.paymentId;
+
+  const execute_payment_json = {
+    "payer_id": payerId,
+    "transactions": [{ "amount": { "currency": "USD", "total": "50.00" } }]
+  };
+
+  paypal.payment.execute(paymentId, execute_payment_json, function (error, payment) {
+    if (error) {
+      console.error(error.response);
+      res.redirect('/cancel');
+    } else {
+      // Nach Zahlung PDF-Link anzeigen / senden
+      res.send(`
+        <h1>Zahlung erfolgreich!</h1>
+        <p>Danke für deinen Kauf. Hier ist dein Download-Link:</p>
+        <a href="/downloads/Virtual_Pro_Agent_AI_Verkaeufer.pdf" download>PDF herunterladen</a>
+      `);
+
+      // Optional: PDF auch per Mail schicken
+      // Hier Mailer-Code ergänzen (siehe unten)
+    }
+  });
+});
+
+// Abbruchseite
+app.get('/cancel', (req, res) => {
+  res.send('<h1>Zahlung abgebrochen.</h1><p>Versuche es gerne später nochmal.</p>');
+});
+
+// Server starten
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Virtual Pro Agent – AI-Verkaufsagent</title>
+</head>
+<body>
+  <h1>Virtual Pro Agent – Dein AI Verkaufsassistent</h1>
+  <p>Sprich mit dem AI-Agenten oder kaufe jetzt dein Exemplar.</p>
+  
+  <button id="payBtn">Jetzt kaufen für 50 USD</button>
+
+  <script>
+    document.getElementById('payBtn').addEventListener('click', async () => {
+      const res = await fetch('/pay', { method: 'POST' });
+      const data = await res.json();
+      if(data.forwardLink) {
+        window.location.href = data.forwardLink; // Weiterleitung zu PayPal
+      } else {
+        alert('Fehler bei der Zahlungserstellung');
+      }
+    });
+  </script>
+</body>
+</html>
+// Mailer Setup (in server.js hinzufügen)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'amirluma05@gmail.com',
+    pass: 'DEIN_GMAIL_APP_PASSWORT'
+  }
+});
+
+function sendPdfMail(toEmail) {
+  const mailOptions = {
+    from: 'amirluma05@gmail.com',
+    to: toEmail,
+    subject: 'Dein Virtual Pro Agent PDF',
+    text: 'Danke für deinen Kauf! Hier ist dein PDF:',
+    attachments: [{
+      filename: 'Virtual_Pro_Agent_AI_Verkaeufer.pdf',
+      path: path.join(__dirname, 'public/downloads/Virtual_Pro_Agent_AI_Verkaeufer.pdf')
+    }]
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if(error) console.error(error);
+    else console.log('Mail gesendet: ' + info.response);
+  });
+}
